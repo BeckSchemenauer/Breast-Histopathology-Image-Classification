@@ -10,7 +10,7 @@ def load_preprocess_images(csv_path):
     df = pd.read_csv(csv_path)
 
     # filter for 40X magnification
-    df_filtered = df[df['magnification'] == 40]
+    df_filtered = df[df['mag'] == 40]
 
     # prepare image and label lists
     images = []
@@ -19,7 +19,7 @@ def load_preprocess_images(csv_path):
     for _, row in df_filtered.iterrows():
         try:
             # load and resize image
-            img = Image.open(row['file_path']).convert('RGB')
+            img = Image.open(row['filename']).convert('RGB')
             img_resized = img.resize((224, 224))
 
             # normalize pixel values and flatten
@@ -30,7 +30,7 @@ def load_preprocess_images(csv_path):
             labels.append(row['tumor_class'])
 
         except Exception as e:
-            print(f"Error processing file {row['file_path']}: {e}")
+            print(f"Error processing file {row['filename']}: {e}")
 
     # convert to NumPy arrays
     X = np.array(images)
