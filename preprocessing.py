@@ -1,12 +1,12 @@
 import pandas as pd
 import numpy as np
 from PIL import Image
+from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
-from sklearn.model_selection import GroupShuffleSplit
 
 
 def load_preprocess_images(csv_path):
-    # Load CSV into DataFrame
+    # load CSV into DataFrame
     df = pd.read_csv(csv_path)
 
     # filter for 40X magnification
@@ -15,53 +15,46 @@ def load_preprocess_images(csv_path):
     # prepare image and label lists
     images = []
     labels = []
-    patient_ids = []
 
     for _, row in df_filtered.iterrows():
         try:
-            # Load and resize image
+            # load and resize image
             img = Image.open(row['filename']).convert('RGB')
             img_resized = img.resize((224, 224))
 
-            # normalize and flatten
+            # normalize pixel values and flatten
             img_array = np.array(img_resized) / 255.0
-            images.append(img_array.flatten())
+            img_flattened = img_array.flatten()
 
-            # collect label and patient id
+            images.append(img_flattened)
             labels.append(row['tumor_class'])
-            patient_ids.append(row['patient_id'])
 
         except Exception as e:
-            print(f"error processing {row['filename']}: {e}")
+            print(f"Error processing file {row['filename']}: {e}")
 
-    X = np.stack(images)
+    # convert to NumPy arrays
+    X = np.array(images)
     y = np.array(labels)
-    groups = np.array(patient_ids)
 
-    return X, y, groups
+    return X, y
 
 
-def split_and_apply_pca(X, y, groups, n_components=200, random_state=42):
-    # first, split out 60% train vs 40% temp by patient_id
-    gss1 = GroupShuffleSplit(n_splits=1, test_size=0.4, random_state=random_state)
-    train_idx, temp_idx = next(gss1.split(X, y, groups))
-    X_train, y_train = X[train_idx], y[train_idx]
-    groups_temp = groups[temp_idx]
-    X_temp, y_temp = X[temp_idx], y[temp_idx]
+def split_and_apply_pca(X, y, n_components=200, random_state=42):
+    # first split into train 60% and temp 40%
+    X_train, X_temp, y_train, y_temp = train_test_split(
+        X, y, test_size=0.4, stratify=y, random_state=random_state
+    )
 
-    # then split temp 50/50 → val and test, again by patient_id
-    gss2 = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=random_state)
-    val_rel_idx, test_rel_idx = next(gss2.split(X_temp, y_temp, groups_temp))
-    val_idx = temp_idx[val_rel_idx]
-    test_idx = temp_idx[test_rel_idx]
-    X_val, y_val = X[val_idx], y[val_idx]
-    X_test, y_test = X[test_idx], y[test_idx]
+    # then split temp into val 20% and test 20%
+    X_val, X_test, y_val, y_test = train_test_split(
+        X_temp, y_temp, test_size=0.5, stratify=y_temp, random_state=random_state
+    )
 
-    # fit PCA on train only
-    pca = PCA(n_components=n_components, random_state=random_state)
+    # fit PCA on training set
+    pca = PCA(n_components=n_components)
     X_train_pca = pca.fit_transform(X_train)
 
-    # apply PCA to val and test
+    # apply PCA transformation to val and test sets
     X_val_pca = pca.transform(X_val)
     X_test_pca = pca.transform(X_test)
 
