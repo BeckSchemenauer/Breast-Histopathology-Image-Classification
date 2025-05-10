@@ -3,14 +3,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
-import numpy as np
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 import seaborn as sns
 import matplotlib.pyplot as plt
+import numpy as np
 
 # check if gpu is available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
+
 
 class FNN(nn.Module):
     def __init__(self):
@@ -31,21 +32,21 @@ class FNN(nn.Module):
 
 
 def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epochs=100):
-    # convert to torch tensors and move to device
-    X_train = torch.tensor(X_train, dtype=torch.float32).to(device)
-    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1).to(device)
-    X_val = torch.tensor(X_val, dtype=torch.float32).to(device)
-    y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1).to(device)
+    # convert to cpu tensors only
+    X_train = torch.tensor(X_train, dtype=torch.float32)
+    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
+    X_val = torch.tensor(X_val, dtype=torch.float32)
+    y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
 
-    # create datasets and loaders for train and val
+    # create datasets and loaders
     train_dataset = TensorDataset(X_train, y_train)
     val_dataset = TensorDataset(X_val, y_val)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
 
-    # create model from custom class, set loss function and optimizer
+    # create model on gpu if available
     model = FNN().to(device)
-    criterion = nn.BCELoss()  # binary cross entropy
+    criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters())
 
     # set up patience counter to determine early stopping
@@ -56,7 +57,7 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epoch
         model.train()
         # loop through input (xb) and target batches (yb)
         for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)
+            xb, yb = xb.to(device), yb.to(device)  # move batch to gpu
             optimizer.zero_grad()
             preds = model(xb)
             loss = criterion(preds, yb)
@@ -91,37 +92,60 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epoch
     return model
 
 
-def evaluate_model(model, X_test, y_test):
+def evaluate_model(model, X_test, y_test, batch_size=32):
     model.eval()
+
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+    y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+
+    test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+
+    preds_all = []
+    y_true_all = []
+
     with torch.no_grad():
-        X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
-        y_test_tensor = torch.tensor(y_test, dtype=torch.float32).to(device)
+        for xb, yb in test_loader:
+            xb = xb.to(device)
+            probs = model(xb).squeeze().cpu()
+            preds = (probs >= 0.5).int().numpy()
+            y_true = yb.int().numpy()
 
-        # predict probabilities
-        probs = model(X_test_tensor).squeeze()
-        preds = (probs >= 0.5).int().cpu().numpy()
-        y_true = y_test_tensor.int().cpu().numpy()
+            preds_all.extend(preds)
+            y_true_all.extend(y_true)
 
-        # classification report
-        print("Classification Report:")
-        print(classification_report(y_true, preds))
+    print("classification report:")
+    print(classification_report(y_true_all, preds_all))
 
-        # confusion matrix
-        cm = confusion_matrix(y_true, preds)
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-        plt.xlabel("Predicted")
-        plt.ylabel("True")
-        plt.title("Confusion Matrix")
-        plt.show()
+    cm = confusion_matrix(y_true_all, preds_all)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.xlabel("predicted")
+    plt.ylabel("true")
+    plt.title("confusion matrix")
+    plt.show()
 
-        # final test accuracy
-        acc = accuracy_score(y_true, preds)
-        print(f"Final Test Accuracy: {acc:.4f}")
+    acc = accuracy_score(y_true_all, preds_all)
+    print(f"final test accuracy: {acc:.4f}")
 
 
 # load and preprocess data
-X, y = load_preprocess_images("folds_updated.csv")
-X_train, X_val, X_test, y_train, y_val, y_test, pca = split_and_apply_pca(X, y)
+X, y, groups = load_preprocess_images("folds_updated.csv")
+print("loaded and preprocessed data")
+
+# split and apply pca
+X_train, X_val, X_test, y_train, y_val, y_test, pca = split_and_apply_pca(X, y, groups)
+print("split and applied pca")
+
+# report sizes of each split
+print(f"train size: {X_train.shape[0]} samples")
+print(f"validation size: {X_val.shape[0]} samples")
+print(f"test size: {X_test.shape[0]} samples")
+
+# report class balances in each split
+for split_name, labels in [("train", y_train), ("validation", y_val), ("test", y_test)]:
+    unique, counts = np.unique(labels, return_counts=True)
+    dist = dict(zip(unique.astype(int), counts))
+    print(f"{split_name} class distribution: {dist}")
 
 # train model
 model = train_model(X_train, y_train, X_val, y_val)
