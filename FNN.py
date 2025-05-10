@@ -8,6 +8,9 @@ from sklearn.metrics import classification_report, confusion_matrix, accuracy_sc
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+# check if gpu is available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
 
 class FNN(nn.Module):
     def __init__(self):
@@ -28,11 +31,11 @@ class FNN(nn.Module):
 
 
 def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epochs=100):
-    # convert to PyTorch tensors
-    X_train = torch.tensor(X_train, dtype=torch.float32)
-    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
-    X_val = torch.tensor(X_val, dtype=torch.float32)
-    y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
+    # convert to torch tensors and move to device
+    X_train = torch.tensor(X_train, dtype=torch.float32).to(device)
+    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1).to(device)
+    X_val = torch.tensor(X_val, dtype=torch.float32).to(device)
+    y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1).to(device)
 
     # create datasets and loaders for train and val
     train_dataset = TensorDataset(X_train, y_train)
@@ -41,8 +44,8 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epoch
     val_loader = DataLoader(val_dataset, batch_size=batch_size)
 
     # create model from custom class, set loss function and optimizer
-    model = FNN()
-    criterion = nn.BCELoss() # binary cross entropy
+    model = FNN().to(device)
+    criterion = nn.BCELoss()  # binary cross entropy
     optimizer = optim.Adam(model.parameters())
 
     # set up patience counter to determine early stopping
@@ -53,19 +56,23 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epoch
         model.train()
         # loop through input (xb) and target batches (yb)
         for xb, yb in train_loader:
+            xb, yb = xb.to(device), yb.to(device)
             optimizer.zero_grad()
             preds = model(xb)
             loss = criterion(preds, yb)
             loss.backward()
             optimizer.step()
 
-        # validation
+        # evaluate on validation set
         model.eval()
         with torch.no_grad():
-            val_losses = [criterion(model(xb), yb) for xb, yb in val_loader]
+            val_losses = []
+            for xb, yb in val_loader:
+                xb, yb = xb.to(device), yb.to(device)
+                val_losses.append(criterion(model(xb), yb))
             avg_val_loss = torch.mean(torch.stack(val_losses)).item()
 
-        print(f"Epoch {epoch + 1}, Val Loss: {avg_val_loss:.4f}")
+        print(f"epoch {epoch + 1}, val loss: {avg_val_loss:.4f}")
 
         # early stopping
         if avg_val_loss < best_val_loss:
@@ -76,7 +83,7 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epoch
             patience_counter += 1
             # if there has been no improvement for a sufficient amount of time, stop
             if patience_counter >= patience:
-                print("Early stopping triggered.")
+                print("early stopping triggered.")
                 break
 
     # load best model
@@ -87,13 +94,13 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epoch
 def evaluate_model(model, X_test, y_test):
     model.eval()
     with torch.no_grad():
-        X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-        y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+        X_test_tensor = torch.tensor(X_test, dtype=torch.float32).to(device)
+        y_test_tensor = torch.tensor(y_test, dtype=torch.float32).to(device)
 
-        # predict probabilities and round to 0/1
+        # predict probabilities
         probs = model(X_test_tensor).squeeze()
-        preds = (probs >= 0.5).int().numpy()
-        y_true = y_test_tensor.int().numpy()
+        preds = (probs >= 0.5).int().cpu().numpy()
+        y_true = y_test_tensor.int().cpu().numpy()
 
         # classification report
         print("Classification Report:")
@@ -112,11 +119,12 @@ def evaluate_model(model, X_test, y_test):
         print(f"Final Test Accuracy: {acc:.4f}")
 
 
+# load and preprocess data
 X, y = load_preprocess_images("folds_updated.csv")
-
 X_train, X_val, X_test, y_train, y_val, y_test, pca = split_and_apply_pca(X, y)
 
+# train model
 model = train_model(X_train, y_train, X_val, y_val)
 
+# evaluate on test set
 evaluate_model(model, X_test, y_test)
-
