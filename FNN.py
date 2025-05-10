@@ -4,10 +4,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
-
-X, y = load_preprocess_images("folds_updated.csv")
-
-X_train, X_val, X_test, y_train, y_val, y_test, pca = split_and_apply_pca(X, y)
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
 class FNN(nn.Module):
@@ -85,5 +84,39 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=32, epoch
     return model
 
 
+def evaluate_model(model, X_test, y_test):
+    model.eval()
+    with torch.no_grad():
+        X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+        y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+
+        # predict probabilities and round to 0/1
+        probs = model(X_test_tensor).squeeze()
+        preds = (probs >= 0.5).int().numpy()
+        y_true = y_test_tensor.int().numpy()
+
+        # classification report
+        print("Classification Report:")
+        print(classification_report(y_true, preds))
+
+        # confusion matrix
+        cm = confusion_matrix(y_true, preds)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+        plt.xlabel("Predicted")
+        plt.ylabel("True")
+        plt.title("Confusion Matrix")
+        plt.show()
+
+        # final test accuracy
+        acc = accuracy_score(y_true, preds)
+        print(f"Final Test Accuracy: {acc:.4f}")
+
+
+X, y = load_preprocess_images("folds_updated.csv")
+
+X_train, X_val, X_test, y_train, y_val, y_test, pca = split_and_apply_pca(X, y)
+
 model = train_model(X_train, y_train, X_val, y_val)
+
+evaluate_model(model, X_test, y_test)
 
