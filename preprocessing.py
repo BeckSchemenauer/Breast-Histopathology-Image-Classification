@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
 
 
-def load_preprocess_images(csv_path):
+def load_preprocess_images(csv_path, flatten=False):
     # load CSV into DataFrame
     df = pd.read_csv(csv_path)
 
@@ -24,9 +24,10 @@ def load_preprocess_images(csv_path):
 
             # normalize pixel values and flatten
             img_array = np.array(img_resized) / 255.0
-            img_flattened = img_array.flatten()
+            if flatten:
+                img_flattened = img_array.flatten()
 
-            images.append(img_flattened)
+            images.append(img_array)
             labels.append(row['tumor_class'])
 
         except Exception as e:
@@ -39,7 +40,7 @@ def load_preprocess_images(csv_path):
     return X, y
 
 
-def split_and_apply_pca(X, y, n_components=200, random_state=42):
+def split_data(X, y, random_state=42):
     # first split into train 60% and temp 40%
     X_train, X_temp, y_train, y_temp = train_test_split(
         X, y, test_size=0.4, stratify=y, random_state=random_state
@@ -50,6 +51,10 @@ def split_and_apply_pca(X, y, n_components=200, random_state=42):
         X_temp, y_temp, test_size=0.5, stratify=y_temp, random_state=random_state
     )
 
+    return X_train, X_val, X_test, y_train, y_val, y_test
+
+
+def apply_pca(X_train, X_val, X_test, y_train, y_val, y_test, n_components=200):
     # fit PCA on training set
     pca = PCA(n_components=n_components)
     X_train_pca = pca.fit_transform(X_train)
