@@ -1,4 +1,4 @@
-from preprocessing import load_preprocess_images, split_and_apply_pca
+from preprocessing import load_preprocess_images, split_data, apply_pca
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -191,11 +191,11 @@ def evaluate_model(model, X_test, y_test, batch_size=8):
 
 
 # load and preprocess data
-X, y = load_preprocess_images("folds_updated.csv")
+X, y, ids = load_preprocess_images("folds_updated.csv", filter_40x=True, flatten=True)
 print("loaded and preprocessed data")
 
 # split and apply pca
-X_train, X_val, X_test, y_train, y_val, y_test, pca = split_and_apply_pca(X, y)
+X_train, X_val, X_test, y_train, y_val, y_test, pca = apply_pca(*split_data(X, y))
 print("split and applied pca")
 
 # report sizes of each split

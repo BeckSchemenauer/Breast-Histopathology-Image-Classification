@@ -1,4 +1,4 @@
-from preprocessing import load_preprocess_images, split_and_apply_pca
+from preprocessing import load_preprocess_images, split_data
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -13,16 +13,28 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 
 
-class FNN(nn.Module):
+class CNN(nn.Module):
     def __init__(self):
-        super(FNN, self).__init__()
+        super(CNN, self).__init__()
         self.net = nn.Sequential(
-            nn.Linear(200, 256),
+            nn.Conv2d(3, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            nn.Flatten(),
+
+            nn.Linear(128 * 28 * 28, 128),
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.5),
+
             nn.Linear(128, 1),
             nn.Sigmoid()
         )
@@ -31,20 +43,27 @@ class FNN(nn.Module):
         return self.net(x)
 
 
-def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=8, epochs=100):
-    X_train = torch.tensor(X_train, dtype=torch.float32)
-    y_train = torch.tensor(y_train, dtype=torch.float32).unsqueeze(1)
-    X_val = torch.tensor(X_val, dtype=torch.float32)
-    y_val = torch.tensor(y_val, dtype=torch.float32).unsqueeze(1)
+def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=4, epochs=100):
+    class ImageDataset(torch.utils.data.Dataset):
+        def __init__(self, X, y):
+            self.X = X
+            self.y = y
 
-    # create datasets and loaders
-    train_dataset = TensorDataset(X_train, y_train)
-    val_dataset = TensorDataset(X_val, y_val)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=False, num_workers=0)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, pin_memory=False, num_workers=0)
+        def __len__(self):
+            return len(self.X)
 
-    # create model on gpu if available
-    model = FNN().to(device)
+        def __getitem__(self, idx):
+            x = torch.tensor(self.X[idx], dtype=torch.float32).permute(2, 0, 1)  # HWC to CHW
+            y = torch.tensor([self.y[idx]], dtype=torch.float32)
+            return x, y
+
+    train_dataset = ImageDataset(X_train, y_train)
+    val_dataset = ImageDataset(X_val, y_val)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, num_workers=0, pin_memory=True)
+
+    model = CNN().to(device)
     criterion = nn.BCELoss()
     optimizer = optim.Adam(model.parameters())
 
@@ -63,7 +82,7 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=8, epochs
 
         # loop through input (xb) and target batches (yb)
         for xb, yb in train_loader:
-            xb, yb = xb.to(device), yb.to(device)  # move batch to gpu
+            xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
             optimizer.zero_grad()
             preds = model(xb)
             loss = criterion(preds, yb)
@@ -85,7 +104,7 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=8, epochs
             val_correct = 0
             val_total = 0
             for xb, yb in val_loader:
-                xb, yb = xb.to(device), yb.to(device)
+                xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
                 outputs = model(xb)
                 loss = criterion(outputs, yb)
                 val_loss += loss.item()
@@ -122,7 +141,6 @@ def train_model(X_train, y_train, X_val, y_val, patience=5, batch_size=8, epochs
 
     # plot training/validation curves
     plot_training_curves(train_losses, val_losses, train_accs, val_accs)
-
     return model
 
 
@@ -157,8 +175,9 @@ def plot_training_curves(train_losses, val_losses, train_accs, val_accs):
 def evaluate_model(model, X_test, y_test, batch_size=8):
     model.eval()
 
-    X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-    y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+    # convert to tensors and permute to [N, C, H, W]
+    X_test_tensor = torch.tensor(X_test, dtype=torch.float32).permute(0, 3, 1, 2)
+    y_test_tensor = torch.tensor(y_test, dtype=torch.float32).unsqueeze(1)
 
     test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
     test_loader = DataLoader(test_dataset, batch_size=batch_size)
@@ -169,9 +188,10 @@ def evaluate_model(model, X_test, y_test, batch_size=8):
     with torch.no_grad():
         for xb, yb in test_loader:
             xb = xb.to(device)
+            yb = yb.to(device)
             probs = model(xb).squeeze().cpu()
             preds = (probs >= 0.5).int().numpy()
-            y_true = yb.int().numpy()
+            y_true = yb.squeeze().cpu().int().numpy()
 
             preds_all.extend(preds)
             y_true_all.extend(y_true)
@@ -191,12 +211,12 @@ def evaluate_model(model, X_test, y_test, batch_size=8):
 
 
 # load and preprocess data
-X, y = load_preprocess_images("folds_updated.csv")
+X, y, ids = load_preprocess_images("folds_updated.csv", filter_40x=True)
 print("loaded and preprocessed data")
 
 # split and apply pca
-X_train, X_val, X_test, y_train, y_val, y_test, pca = split_and_apply_pca(X, y)
-print("split and applied pca")
+X_train, X_val, X_test, y_train, y_val, y_test = split_data(X, y)
+print("split data")
 
 # report sizes of each split
 print(f"train size: {X_train.shape[0]} samples")

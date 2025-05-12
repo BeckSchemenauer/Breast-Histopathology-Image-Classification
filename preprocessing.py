@@ -5,39 +5,38 @@ from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
 
 
-def load_preprocess_images(csv_path, flatten=False):
+def load_preprocess_images(csv_path, filter_40x=False, flatten=False):
     # load CSV into DataFrame
     df = pd.read_csv(csv_path)
 
-    # filter for 40X magnification
-    df_filtered = df[df['mag'] == 40]
+    if filter_40x:
+        # filter for 40X magnification
+        df = df[df['mag'] == 40]
 
-    # prepare image and label lists
+    # prepare image, label, and ID lists
     images = []
     labels = []
+    ids = []
 
-    for _, row in df_filtered.iterrows():
+    for _, row in df.iterrows():
         try:
             # load and resize image
             img = Image.open(row['filename']).convert('RGB')
             img_resized = img.resize((224, 224))
 
-            # normalize pixel values and flatten
+            # normalize pixel values
             img_array = np.array(img_resized) / 255.0
             if flatten:
-                img_flattened = img_array.flatten()
+                img_array = img_array.flatten()
 
             images.append(img_array)
             labels.append(row['tumor_class'])
+            ids.append(row['patient_id'])
 
         except Exception as e:
             print(f"Error processing file {row['filename']}: {e}")
 
-    # convert to NumPy arrays
-    X = np.array(images)
-    y = np.array(labels)
-
-    return X, y
+    return np.array(images), np.array(labels), np.array(ids)
 
 
 def split_data(X, y, random_state=42):
